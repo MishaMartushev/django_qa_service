@@ -1,0 +1,76 @@
+services:
+  web:
+    container_name: web_django_qa_service
+    build:
+      context: .
+      dockerfile: ./compose/python/Dockerfile
+    working_dir: /usr/src/app
+    command: >
+      bash -c "python manage.py collectstatic --noinput
+      && python manage.py migrate
+      && gunicorn -b 0.0.0.0:8000 --workers 4 --threads 2 --timeout 90 config.wsgi:application"
+    volumes:
+      - uv-cache:/usr/src/.uv_cache
+      - static_volume:/usr/src/app/static
+      - ./app:/usr/src/app:cached
+    env_file:
+      - ./app/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - django_network
+    restart: unless-stopped
+
+  postgres:
+    container_name: postgres_django_qa_service
+    build:
+      context: .
+      dockerfile: ./compose/postgres/Dockerfile
+    env_file:
+      - .env.db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - django_network
+    restart: unless-stopped
+
+  nginx:
+    container_name: nginx_django_qa_service
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - static_volume:/usr/src/app/static:ro
+    depends_on:
+      - web
+    networks:
+      - django_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  static_volume:
+    driver: local
+  uv-cache:
+    driver: local
+
+networks:
+  django_network:
+    driver: bridge
